@@ -1,0 +1,27 @@
+#include "rclcpp/rclcpp.hpp"
+#include "turtlebot3_node/sensors/battery_state.hpp"
+
+int main(int argc, char * argv[])
+{
+    rclcpp::init(argc, argv);
+
+    auto nh = std::make_shared<rclcpp::Node>("battery_state_node");
+
+    // 배터리 상태 퍼블리셔 인스턴스 생성
+    auto battery_state_publisher = std::make_shared<robotis::turtlebot3::sensors::BatteryState>(
+        nh,
+        "battery_state",
+        rclcpp::QoS(10));
+
+    // 반복적으로 배터리 상태를 퍼블리시하기 위한 타이머 설정
+    auto timer = nh->create_wall_timer(
+        std::chrono::milliseconds(500),
+        [battery_state_publisher]() {
+            battery_state_publisher->publish();
+        });
+
+    rclcpp::spin(nh);
+    rclcpp::shutdown();
+
+    return 0;
+}
