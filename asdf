@@ -1,0 +1,93 @@
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image, BatteryState
+from nav_msgs.msg import Odometry
+from cv_bridge import CvBridge
+import cv2
+import threading
+import math
+
+class RobotStatusDisplay(Node):
+    def __init__(self):
+        super().__init__('robot_status_display')
+        self.bridge = CvBridge()
+        self.image_sub = self.create_subscription(
+            Image,
+            '/image_raw',  # 실제 카메라 이미지 토픽 이름
+            self.image_callback,
+            10)
+        self.odom_sub = self.create_subscription(
+            Odometry,
+            '/odom',  # 실제 오도메트리 토픽 이름
+            self.odom_callback,
+            10)
+        self.battery_sub = self.create_subscription(
+            BatteryState,
+            '/battery_state',  # 실제 배터리 토픽 이름 확인 필요
+            self.battery_callback,
+            10)
+        self.current_image = None
+        self.position = None
+        self.orientation = None
+        self.battery_info = None
+        self.display_thread = threading.Thread(target=self.display_info)
+        self.display_thread.start()
+
+    def image_callback(self, msg):
+        self.current_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+
+    def odom_callback(self, msg):
+        self.position = msg.pose.pose.position
+        self.orientation = msg.pose.pose.orientation
+
+    def battery_callback(self, msg):
+        self.battery_info = msg
+
+    def display_info(self):
+        while rclpy.ok():
+            if self.current_image is not None:
+                display_image = self.current_image.copy()
+                if self.position is not None and self.orientation is not None:
+                    position_text = f'Position: ({self.position.x:.2f}, {self.position.y:.2f}, {self.position.z:.2f})'
+                    orientation_euler = self.quaternion_to_euler(self.orientation)
+                    orientation_text = f'Orientation: ({orientation_euler[0]:.2f}, {orientation_euler[1]:.2f}, {orientation_euler[2]:.2f})'
+                    cv2.putText(display_image, position_text, (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                    cv2.putText(display_image, orientation_text, (10, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                if self.battery_info is not None:
+                    battery_text = f'Battery: {self.battery_info.percentage * 100:.2f}%'
+                    charging_text = 'Charging' if self.battery_info.power_supply_status == BatteryState.POWER_SUPPLY_STATUS_CHARGING else 'Not Charging'
+                    cv2.putText(display_image, battery_text, (10, 90),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(display_image, charging_text, (10, 120),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.imshow('Robot Status Display', display_image)
+                cv2.waitKey(1)
+            else:
+                self.get_clock().sleep_for(rclpy.duration.Duration(seconds=0.1))
+
+    def quaternion_to_euler(self, q):
+        # 변환 공식 적용
+        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+        sinp = 2 * (q.w * q.y - q.z * q.x)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)
+        else:
+            pitch = math.asin(sinp)
+        sinr_cosp = 2 * (q.w * q.x + q.y * q.z)
+        cosr_cosp = 1 - 2 * (q.x * q.x + q.y * q.y)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+        return roll, pitch, yaw
+
+def main(args=None):
+    rclpy.init(args=args)
+    robot_status_display = RobotStatusDisplay()
+    rclpy.spin(robot_status_display)
+    robot_status_display.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
