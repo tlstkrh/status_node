@@ -1,0 +1,103 @@
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+from collections import Counter
+import time
+from geometry_msgs.msg import Twist
+
+class LineFollower(Node):
+    def __init__(self):
+        super().__init__('line_follower')
+        self.subscription = self.create_subscription(
+            Image,
+            'image_raw',
+            self.image_callback,
+            10)
+        self.subscription
+        self.bridge = CvBridge()
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.mission_complete = False
+
+    def image_callback(self, msg):
+        if self.mission_complete == True:
+            return
+        cv_imag = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        cv_imag = cv2.flip(cv_imag, -1)
+
+        height, width, _ = cv_imag.shape
+
+        cv_image = cv_imag[4*height//5:, :-1*width//5]
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        right_image = cv_imag[8  * height // 9:, 3 * width // 5: 4 * width // 6]
+
+        gray_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+        right_gray_image=cv2.cvtColor(right_image, cv2.COLOR_BGR2GRAY)
+        _, thresholded = cv2.threshold(gray_image, 100, 255, cv2.THRESH_BINARY_INV)
+        _, right_thresholded = cv2.threshold(right_gray_image, 100, 255, cv2.THRESH_BINARY_INV)
+
+        # 오른쪽 창
+        black_pixel_ratio_right = np.sum(right_thresholded >= 200) / (right_thresholded.size)
+
+        # 메인 창
+        black_pixel_ratio = np.sum(thresholded >= 200) / (thresholded.size)
+
+        thresholded = cv2.morphologyEx(thresholded, cv2.MORPH_OPEN, kernel)
+        # Detect contours
+        contours, _ = cv2.findContours(thresholded, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        twist = Twist()
+
+        if contours:
+            largest_contour = max(contours, key=cv2.contourArea)
+            M = cv2.moments(largest_contour)
+
+            if M['m00'] != 0:
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
+
+                center_offset = 70
+                target_position = cv_image.shape[1] // 2 + center_offset
+                error = cx - target_position
+
+                twist.angular.z = -float(error) / 300.0
+                twist.linear.x = 0.185
+
+
+                if black_pixel_ratio > 0.4:
+                      self.get_logger().info("Mission Complete")
+                      time.sleep(2)
+                      twist.angular.z = 0.0
+                      twist.linear.x = 0.0  # 정지
+                      self.mission_complete = True
+
+                if black_pixel_ratio_right > 0.1:
+                     self.get_logger().info("Right line detected!")
+                     twist.angular.z = -0.7
+                     twist.linear.x = 0.1  # 속도 줄이기
+
+                print("error: ", error, "liner.x: ", twist.linear.x, "angular.z: ", twist.angular.z)
+            self.cmd_vel_pub.publish(twist)
+
+        cv2.imshow("Line Detection", thresholded)
+        cv2.imshow("right_image", right_image)
+        cv2.waitKey(1)
+
+def main(args=None):
+    rclpy.init(args=args)
+    line_follower = LineFollower()
+
+    try:
+        rclpy.spin(line_follower)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        line_follower.destroy_node()
+        rclpy.shutdown()
+        cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+    main()
