@@ -1,0 +1,8 @@
+wget https://github.com/aler9/rtsp-simple-server/releases/latest/download/rtsp-simple-server_linux_amd64.tar.gz
+tar -xvzf rtsp-simple-server_linux_amd64.tar.gz
+cd rtsp-simple-server
+./rtsp-simple-server
+
+
+ffmpeg -rtsp_transport tcp -i rtsp://192.168.144.25:8554/main.264 \
+       -c:v copy -f rtsp rtsp://127.0.0.1:8554/forwarded_stream
