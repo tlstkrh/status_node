@@ -1,14 +1,3 @@
-sudo apt update
-sudo apt install libgstreamer1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base \
-gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-gstreamer1.0-libav
-
-
-gst-launch-1.0 rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=0 ! \
-rtph264depay ! h264parse ! nvh264dec ! videoconvert ! autovideosink
-
-
-
 # image_streaming/pub.py
 
 import rclpy
@@ -36,7 +25,7 @@ class ImagePublisher(Node):
         self.bridge = CvBridge()
 
         # FFMPEG를 이용한 RTSP 스트림 설정
-        self.rtsp_url = "rtsp://192.168.144.25:8554/main.264"  # 실제 RTSP 스트림 URL로 변경
+        self.rtsp_url = "rtsp://192.168.144.25:8554/main.264?tcp=1"  # 실제 RTSP 스트림 URL로 변경
         self.cap = self.open_stream()
 
     def open_stream(self):
@@ -48,7 +37,10 @@ class ImagePublisher(Node):
         else:
             self.get_logger().info(f'Connected to RTSP stream: {self.rtsp_url}')
             # Optional: OpenCV 비디오 버퍼 사이즈 조정 (필요시)
-            # cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FPS, 10)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             return cap
 
     def timer_callback(self):
