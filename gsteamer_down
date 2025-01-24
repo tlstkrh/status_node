@@ -4,6 +4,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
 import os
+import time
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSReliabilityPolicy
 
 class ImagePublisher(Node):
@@ -18,44 +19,60 @@ class ImagePublisher(Node):
         )
 
         self.publisher_ = self.create_publisher(Image, 'image_topic', qos_profile)
+        self.bridge = CvBridge()
+
+        # FFMPEG 옵션 설정
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|flags;low_delay|framedrop;1"
+        self.rtsp_url = "rtsp://192.168.144.25:8554/main.264"  # RTSP 스트림 URL
+        self.cap = None
+        self.open_stream()
+
         timer_period = 0.1  # 초 단위 (10 FPS)
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.bridge = CvBridge()
-        
-        # FFMPEG 옵션 설정
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1"
-        self.rtsp_url = "rtsp://192.168.144.25:8554/main.264"  # RTSP 스트림 URL
-        self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)  # FFMPEG 사용
 
+    def open_stream(self):
+        """RTSP 스트림 연결"""
+        if self.cap:
+            self.cap.release()
+        self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         if not self.cap.isOpened():
-            self.get_logger().error(f'Failed to open RTSP stream: {self.rtsp_url}')
+            self.get_logger().error(f"Failed to open RTSP stream: {self.rtsp_url}")
         else:
-            self.get_logger().info(f'Connected to RTSP stream: {self.rtsp_url}')
+            self.get_logger().info(f"Connected to RTSP stream: {self.rtsp_url}")
 
     def timer_callback(self):
-        ret, frame = self.cap.read()
-        if not ret:
-            self.get_logger().warn('Failed to read frame from RTSP stream.')
+        """주기적으로 프레임 읽고 퍼블리시"""
+        if not self.cap or not self.cap.isOpened():
+            self.get_logger().warn("RTSP stream is not open. Attempting to reconnect...")
+            self.open_stream()
             return
 
-        # ROS Image 메시지로 변환
+        ret, frame = self.cap.read()
+        if not ret:
+            self.get_logger().warn("Failed to read frame from RTSP stream. Reconnecting...")
+            self.open_stream()
+            return
+
+        # ROS Image 메시지로 변환 및 퍼블리시
         try:
             msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
             self.publisher_.publish(msg)
-            self.get_logger().debug('Published image frame.')
+            self.get_logger().debug("Published image frame.")
 
             # OpenCV GUI로 이미지 확인
             cv2.imshow('Published Image', frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
-                self.get_logger().info('Shutting down GUI preview.')
+                self.get_logger().info("Shutting down GUI preview.")
                 rclpy.shutdown()
         except Exception as e:
-            self.get_logger().error(f'Failed to convert and publish image: {e}')
+            self.get_logger().error(f"Failed to convert and publish image: {e}")
 
     def destroy_node(self):
-        self.cap.release()
-        cv2.destroyAllWindows()  # OpenCV 자원 정리
+        """노드 종료 시 자원 정리"""
+        if self.cap:
+            self.cap.release()
+        cv2.destroyAllWindows()
         super().destroy_node()
 
 def main(args=None):
@@ -71,6 +88,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
-
 
