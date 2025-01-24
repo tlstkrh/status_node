@@ -3,6 +3,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
+import os
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSReliabilityPolicy
 
 class ImagePublisher(Node):
@@ -20,8 +21,11 @@ class ImagePublisher(Node):
         timer_period = 0.1  # 초 단위 (10 FPS)
         self.timer = self.create_timer(timer_period, self.timer_callback)
         self.bridge = CvBridge()
+        
+        # FFMPEG 옵션 설정
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1"
         self.rtsp_url = "rtsp://192.168.144.25:8554/main.264"  # RTSP 스트림 URL
-        self.cap = cv2.VideoCapture(self.rtsp_url)
+        self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)  # FFMPEG 사용
 
         if not self.cap.isOpened():
             self.get_logger().error(f'Failed to open RTSP stream: {self.rtsp_url}')
@@ -67,4 +71,6 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
 
