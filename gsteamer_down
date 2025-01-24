@@ -3,77 +3,55 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
-import threading
-from queue import Queue
-import time
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSReliabilityPolicy
 
 class ImagePublisher(Node):
     def __init__(self):
         super().__init__('image_publisher')
 
-        # QoS 설정
+        # QoS 프로파일 설정
         qos_profile = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=10,
-            reliability=QoSReliabilityPolicy.RELIABLE
+            reliability=QoSReliabilityPolicy.BEST_EFFORT  # 신뢰성 설정
         )
+
         self.publisher_ = self.create_publisher(Image, 'image_topic', qos_profile)
+        timer_period = 0.1  # 초 단위 (10 FPS)
+        self.timer = self.create_timer(timer_period, self.timer_callback)
         self.bridge = CvBridge()
+        self.rtsp_url = "rtsp://192.168.144.25:8554/main.264"  # RTSP 스트림 URL
+        self.cap = cv2.VideoCapture(self.rtsp_url)
 
-        # RTSP 스트림 설정
-        self.rtsp_url = "rtsp://192.168.144.25:8554/main.264"
-        self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         if not self.cap.isOpened():
-            self.get_logger().error(f"Failed to open RTSP stream: {self.rtsp_url}")
-            return
-
-        # 이미지 큐 및 스레드 설정
-        self.image_queue = Queue(maxsize=10)  # 최대 10 프레임까지 큐에 저장
-        self.stop_event = threading.Event()
-        self.rtsp_thread = threading.Thread(target=self.rtsp_reader)
-        self.rtsp_thread.start()
-
-        # DDS 전송 타이머
-        self.timer = self.create_timer(0.1, self.timer_callback)  # 10 FPS로 전송
-
-    def rtsp_reader(self):
-        """RTSP에서 프레임을 읽어오는 스레드"""
-        while not self.stop_event.is_set():
-            ret, frame = self.cap.read()
-            if not ret:
-                self.get_logger().warn("Failed to read frame from RTSP stream")
-                continue
-
-            # 큐가 가득 차면 가장 오래된 데이터 삭제
-            if self.image_queue.full():
-                try:
-                    self.image_queue.get_nowait()  # 오래된 프레임 삭제
-                except Exception as e:
-                    self.get_logger().warn(f"Failed to drop frame: {e}")
-
-            self.image_queue.put(frame)  # 큐에 새 프레임 추가
-            time.sleep(0.05)  # RTSP 읽기 속도 제한 (20 FPS)
+            self.get_logger().error(f'Failed to open RTSP stream: {self.rtsp_url}')
+        else:
+            self.get_logger().info(f'Connected to RTSP stream: {self.rtsp_url}')
 
     def timer_callback(self):
-        """큐에서 프레임을 꺼내 DDS로 전송"""
-        if not self.image_queue.empty():
-            frame = self.image_queue.get()
-            try:
-                msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
-                self.publisher_.publish(msg)
-                self.get_logger().info("Published frame")
-            except Exception as e:
-                self.get_logger().error(f"Failed to publish image: {e}")
-        else:
-            self.get_logger().warn("Queue is empty. Skipping frame.")
+        ret, frame = self.cap.read()
+        if not ret:
+            self.get_logger().warn('Failed to read frame from RTSP stream.')
+            return
+
+        # ROS Image 메시지로 변환
+        try:
+            msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+            self.publisher_.publish(msg)
+            self.get_logger().debug('Published image frame.')
+
+            # OpenCV GUI로 이미지 확인
+            cv2.imshow('Published Image', frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                self.get_logger().info('Shutting down GUI preview.')
+                rclpy.shutdown()
+        except Exception as e:
+            self.get_logger().error(f'Failed to convert and publish image: {e}')
 
     def destroy_node(self):
-        """노드 종료 시 RTSP 스레드와 리소스 정리"""
-        self.stop_event.set()
-        self.rtsp_thread.join()
-        if self.cap.isOpened():
-            self.cap.release()
+        self.cap.release()
+        cv2.destroyAllWindows()  # OpenCV 자원 정리
         super().destroy_node()
 
 def main(args=None):
@@ -89,3 +67,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
