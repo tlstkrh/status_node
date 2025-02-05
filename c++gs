@@ -1,0 +1,70 @@
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/opencv.hpp>
+#include <string>
+
+class ImagePublisher : public rclcpp::Node {
+public:
+    ImagePublisher() : Node("image_publisher") {
+        // 고정된 RTSP URL
+        rtsp_url_ = "rtsp://192.168.144.25:8554/main.264";
+        
+        // GStreamer 파이프라인 문자열 구성
+        // latency=0: 지연 최소화, protocols=tcp: TCP 전송 강제, decodebin, videoconvert, appsink 사용
+        std::string pipeline = "rtspsrc location=" + rtsp_url_ + " latency=0 protocols=tcp ! decodebin ! videoconvert ! appsink";
+        
+        // GStreamer 백엔드를 이용하여 VideoCapture 초기화
+        // cv::CAP_GSTREAMER 플래그를 사용하여 GStreamer 파이프라인을 이용함
+        cap_.open(pipeline, cv::CAP_GSTREAMER);
+        if (!cap_.isOpened()) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to open RTSP stream with GStreamer pipeline: %s", pipeline.c_str());
+            return;
+        } else {
+            RCLCPP_INFO(this->get_logger(), "Connected to RTSP stream using GStreamer pipeline");
+        }
+        
+        // QoS 프로파일 설정: depth=10, BEST_EFFORT
+        rclcpp::QoS qos_profile(10);
+        qos_profile.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
+        
+        // 이미지 메시지를 발행할 Publisher 생성 (토픽 이름: "image_topic")
+        publisher_ = this->create_publisher<sensor_msgs::msg::Image>("image_topic", qos_profile);
+        
+        // 100 밀리초 주기로 타이머 콜백 실행 (약 10 FPS)
+        timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&ImagePublisher::timer_callback, this)
+        );
+    }
+
+private:
+    void timer_callback() {
+        cv::Mat frame;
+        if (cap_.read(frame)) {
+            // (TEST: GUI 표시) -- 나중에 제거 가능
+            cv::imshow("RTSP Stream", frame);
+            cv::waitKey(1);
+            
+            // ROS 이미지 메시지로 변환 후 토픽으로 발행
+            auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
+            publisher_->publish(*msg);
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Failed to read frame from RTSP stream.");
+        }
+    }
+
+    cv::VideoCapture cap_;
+    std::string rtsp_url_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
+    rclcpp::TimerBase::SharedPtr timer_;
+};
+
+int main(int argc, char** argv) {
+    // ROS2 초기화
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<ImagePublisher>();
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    return 0;
+}
