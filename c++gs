@@ -68,3 +68,4 @@ int main(int argc, char** argv) {
     rclcpp::shutdown();
     return 0;
 }
+        std::string pipeline = "rtspsrc location=" + rtsp_url_ + " latency=0 protocols=tcp ! queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink sync=false";
