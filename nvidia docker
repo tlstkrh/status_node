@@ -1,0 +1,20 @@
+# Docker 설치 (Ubuntu 기준)
+sudo apt-get update && sudo apt-get install -y docker.io
+
+# NVIDIA Container Toolkit 설치를 위한 키 및 리포지터리 설정
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+
+# nvidia-docker2 설치
+sudo apt-get update && sudo apt-get install -y nvidia-docker2
+sudo systemctl restart docker
+
+
+docker login nvcr.io
+
+name : tlstrkh
+API Key: aW5sN2NubzgxNGhodGRtMDF0N2pnM2tzcXE6NzdkNTMxMjUtNjM2ZS00MGE1LWIyOGItN2M3MDMwMGVjM2Q0
+
+docker pull nvcr.io/nvidia/l4t-base:r32.7.1
+docker run --rm --runtime nvidia -it nvcr.io/nvidia/l4t-base:r32.7.1
