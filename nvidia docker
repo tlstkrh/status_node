@@ -18,3 +18,20 @@ API Key: aW5sN2NubzgxNGhodGRtMDF0N2pnM2tzcXE6NzdkNTMxMjUtNjM2ZS00MGE1LWIyOGItN2M
 
 docker pull nvcr.io/nvidia/l4t-base:r32.7.1
 docker run --rm --runtime nvidia -it nvcr.io/nvidia/l4t-base:r32.7.1
+
+
+
+docker run --gpus all -it --privileged \
+  -e DISPLAY=$DISPLAY \
+  --env=LOCAL_USER_ID="$(id -u)" \
+  --env="QT_X11_NO_MITSHM=1" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  --device /dev:/dev:rw \
+  --hostname $(hostname) \
+  --network=host \
+  --name nvdia_camara_test nvcr.io/nvidia/l4t-base:r32.7,1 bash
+
+
+
+gst-inspect-1.0 nvv4l2decoder
+
