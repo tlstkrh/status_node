@@ -26,3 +26,13 @@ sudo apt install -y ros-humble-rclcpp ros-humble-sensor-msgs ros-humble-cv-bridg
 gst-launch-1.0 \
   rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
   queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
+
+gst-launch-1.0 \
+  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
+  queue ! rtph264depay ! h264parse ! nvv4l2decoder ! videoconvert ! autovideosink
+
+
+gst-launch-1.0 \
+  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
+  queue ! rtph264depay ! h264parse ! nvv4l2decoder ! videoconvert ! \
+  queue max-size-buffers=1 leaky=downstream ! autovideosink sync=false
