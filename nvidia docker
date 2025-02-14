@@ -15,7 +15,7 @@ docker login nvcr.io
 
 name : tlstrkh
 API Key: aW5sN2NubzgxNGhodGRtMDF0N2pnM2tzcXE6NzdkNTMxMjUtNjM2ZS00MGE1LWIyOGItN2M3MDMwMGVjM2Q0
-
+aW5sN2NubzgxNGhodGRtMDF0N2pnM2tzcXE6Nzg5YzkwNGEtNjU4Yi00ZjAxLTk2ZWUtMTZhN2I0MjVlZTQ3
 docker pull nvcr.io/nvidia/l4t-base:r32.7.1
 docker run --rm --runtime nvidia -it nvcr.io/nvidia/l4t-base:r32.7.1
 
