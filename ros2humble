@@ -23,9 +23,6 @@ sudo apt update
 sudo apt install -y ros-humble-rclcpp ros-humble-sensor-msgs ros-humble-cv-bridge
 
 
-apt-get update && apt-get install -y \
-  gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good \
-  gstreamer1.0-plugins-bad \
-  gstreamer1.0-plugins-ugly \
-  gstreamer1.0-libav
+gst-launch-1.0 \
+  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
+  queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
