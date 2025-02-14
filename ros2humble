@@ -9,6 +9,7 @@ sh -c 'echo "deb [arch=arm64] http://packages.ros.org/ros2/ubuntu $(lsb_release 
 
 # 4. ROS 2 Humble 데스크톱 패키지 설치
 apt update && apt install -y ros-humble-desktop
+apt install -y ros-humble-ros-base
 
 # 5. 환경 설정
 echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
@@ -16,3 +17,15 @@ source ~/.bashrc
 
 source /opt/ros/humble/setup.bash
 ros2 --version
+
+
+sudo apt update
+sudo apt install -y ros-humble-rclcpp ros-humble-sensor-msgs ros-humble-cv-bridge
+
+
+apt-get update && apt-get install -y \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
