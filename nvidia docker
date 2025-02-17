@@ -44,3 +44,9 @@ gst-launch-1.0 \
   rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
   queue ! rtph264depay ! h264parse ! nvv4l2decoder ! videoconvert ! \
   nveglglessink sync=false
+
+
+gst-launch-1.0 \
+  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=120 protocols=tcp ! \
+  queue ! rtph264depay ! h264parse ! nvv4l2decoder ! videoconvert ! \
+  video/x-raw,format=NV12 ! queue max-size-buffers=2 leaky=downstream ! nveglglessink sync=false
