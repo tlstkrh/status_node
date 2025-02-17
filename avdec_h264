@@ -20,3 +20,14 @@ std::string pipeline = "rtspsrc location=" + rtsp_url_ +
     " latency=" + std::to_string(latency) +
     " protocols=" + protocols +
     " ! queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink max-buffers=1 drop=true sync=false";
+
+
+
+gst-launch-1.0 -v \
+  rtspsrc location=rtsp://<your_rtsp_url> latency=100 protocols=udp ! \
+  queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
+  queue max-size-buffers=10 leaky=downstream ! autovideosink sync=false
+gst-launch-1.0 -v \
+  rtspsrc location=rtsp://<your_rtsp_url> latency=100 protocols=tcp ! \
+  queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
+  queue max-size-buffers=10 leaky=downstream ! ximagesink sync=false
