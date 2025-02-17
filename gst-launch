@@ -1,15 +1,4 @@
-gst-launch-1.0 -v \
-  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=200 protocols=tcp ! \
-  queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
-  queue max-size-buffers=20 leaky=downstream ! autovideosink sync=false
-gst-launch-1.0 -v \
-  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=200 protocols=tcp ! \
-  queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
-  queue max-size-buffers=20 leaky=downstream ! ximagesink sync=false
-gst-launch-1.0 -v \
-  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=200 protocols=tcp ! \
-  queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
-  queue max-size-buffers=20 leaky=downstream ! nveglglessink sync=false
+
 
 gst-launch-1.0 -v \
   rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=udp ! \
@@ -18,19 +7,12 @@ gst-launch-1.0 -v \
   queue max-size-buffers=20 leaky=downstream ! autovideosink sync=false
 
 gst-launch-1.0 -v \
-  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
+  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=udp ! \
   queue max-size-buffers=20 leaky=downstream ! \
-  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
-  queue max-size-buffers=20 leaky=downstream ! ximagesink sync=false
-
+  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! videorate ! \
+  queue max-size-buffers=20 leaky=downstream ! autovideosink sync=false
 gst-launch-1.0 -v \
-  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
+  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=udp ! \
   queue max-size-buffers=20 leaky=downstream ! \
-  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! \
-  queue max-size-buffers=20 leaky=downstream ! nveglglessink sync=false
- #저
-gst-launch-1.0 -v \
-  rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! \
-  queue max-size-buffers=20 leaky=downstream ! \
-  rtph264depay ! h264parse ! mp4mux ! \
-  filesink location=output.mp4
+  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! videorate ! \
+  queue max-size-buffers=20 leaky=downstream max-lateness=2000000000 ! autovideosink sync=false
