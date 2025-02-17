@@ -1,0 +1,22 @@
+# 우분투 패키지 목록 업데이트
+apt-get update
+
+# FFmpeg 기반 GStreamer 플러그인(소프트웨어 디코더), 기타 영상 관련 플러그인 설치
+apt-get install -y \
+  gstreamer1.0-libav \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-tools
+gst-inspect-1.0 avdec_h264
+
+gst-launch-1.0 \
+  rtspsrc location=rtsp://<your_rtsp_url> latency=100 protocols=udp ! \
+  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
+gst-launch-1.0 \
+  rtspsrc location=rtsp://<your_rtsp_url> latency=100 protocols=udp ! \
+  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! ximagesink
+std::string pipeline = "rtspsrc location=" + rtsp_url_ +
+    " latency=" + std::to_string(latency) +
+    " protocols=" + protocols +
+    " ! queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink max-buffers=1 drop=true sync=false";
