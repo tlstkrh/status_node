@@ -44,7 +44,8 @@ public:
             " ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! "
             "queue max-size-buffers=" + std::to_string(queue_size) +
             " leaky=" + leaky_option +
-            " ! appsink sync=false drop=true max-buffers=1";
+            " ! appsink sync=false";
+
 
         RCLCPP_INFO(this->get_logger(), "Using pipeline: %s", pipeline_.c_str());
 
