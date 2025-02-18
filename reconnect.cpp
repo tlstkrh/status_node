@@ -3,12 +3,16 @@
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include <string>
+#include <chrono>
+#include <thread>
+#include <atomic>
 
 class ImagePublisher : public rclcpp::Node {
 public:
     ImagePublisher()
       : Node("image_publisher"),
-        fail_count_(0)
+        fail_count_(0),
+        reconnect_requested_(false)
     {
         // Declare parameters
         this->declare_parameter<std::string>("rtsp_url", "rtsp://192.168.144.25:8554/main.264");
@@ -61,6 +65,12 @@ public:
             std::chrono::milliseconds(period_ms),
             std::bind(&ImagePublisher::timer_callback, this)
         );
+
+        // 비동기 재연결 타이머 (1초 간격으로 재접속 요청이 있으면 시도)
+        reconnect_timer_ = this->create_wall_timer(
+            std::chrono::seconds(1),
+            std::bind(&ImagePublisher::reconnect_callback, this)
+        );
     }
 
 private:
@@ -78,36 +88,41 @@ private:
     }
 
     void timer_callback() {
+        // 메인 타이머 콜백은 빠르게 반환해야 함.
         if (!cap_.isOpened()) {
-            // 열려있지 않다면 재시도
-            RCLCPP_WARN(this->get_logger(), "Capture not opened. Trying to re-open pipeline...");
-            if (!openPipeline()) {
-                RCLCPP_ERROR(this->get_logger(), "Failed to re-open pipeline.");
-            }
+            // 열려있지 않다면 프레임을 읽지 않고 반환
             return;
         }
 
         cv::Mat frame;
         if (cap_.read(frame)) {
-            // 성공적으로 프레임을 읽었다면, fail_count_ 리셋
+            // 성공적으로 프레임을 읽었다면
             fail_count_ = 0;
-
-            // Mat -> sensor_msgs::Image 변환
             auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
             publisher_->publish(*msg);
         } else {
-            // 프레임 읽기 실패 시
             fail_count_++;
             RCLCPP_WARN(this->get_logger(),
                         "Failed to read frame from RTSP stream. fail_count=%d",
                         fail_count_);
 
-            // fail_count_ 임계값 도달 시 재접속 시도
-            if (fail_count_ >= 10) {  // 예: 10번 연속 실패하면 재접속
-                RCLCPP_WARN(this->get_logger(), "Trying to re-open pipeline...");
-                if (!openPipeline()) {
-                    RCLCPP_ERROR(this->get_logger(), "Failed to re-open pipeline after repeated failures.");
-                }
+            // 일정 횟수 이상 실패하면 재접속 요청
+            if (fail_count_ >= 10) {
+                fail_count_ = 0;  // 카운트 리셋
+                RCLCPP_WARN(this->get_logger(), "Requesting to re-open pipeline...");
+                reconnect_requested_ = true;  
+            }
+        }
+    }
+
+    void reconnect_callback() {
+        // 1초 간격으로 돌아가는 타이머
+        // reconnect_requested_가 true이고, 아직 노드가 살아있는 경우에만 재접속 시도
+        if (reconnect_requested_ && rclcpp::ok()) {
+            reconnect_requested_ = false;  // 플래그 리셋
+            RCLCPP_WARN(this->get_logger(), "Re-opening pipeline now...");
+            if (!openPipeline()) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to re-open pipeline (reconnect_callback).");
             }
         }
     }
@@ -120,15 +135,20 @@ private:
 
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr reconnect_timer_;
 
-    // 재연결 로직을 위한 카운터
     int fail_count_;
+    std::atomic<bool> reconnect_requested_; // 재연결 요청 플래그
 };
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
+
     auto node = std::make_shared<ImagePublisher>();
     rclcpp::spin(node);
+    // 여기까지 왔다는 것은 ^C 신호 등으로 종료를 시작했다는 의미
+
     rclcpp::shutdown();
     return 0;
 }
+
