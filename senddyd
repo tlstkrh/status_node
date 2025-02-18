@@ -1,0 +1,39 @@
+root@karidrone-desktop:/workspace/src# ros2 launch image_transmission publisher_launch.py 
+[INFO] [launch]: All log files can be found below /root/.ros/log/2025-02-18-20-48-49-377737-karidrone-desktop-453
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [stream_publish-1]: process started with pid [454]
+[stream_publish-1] [INFO] [1739879330.051943082] [stream_publish]: Using pipeline: rtspsrc location=rtsp://192.168.144.25:8554/main.264 latency=100 protocols=tcp ! queue max-size-buffers=20 leaky=downstream ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! queue max-size-buffers=20 leaky=downstream ! appsink sync=false drop=true max-buffers=1
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (1063) open OpenCV | GStreamer warning: unable to query duration of stream
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (1100) open OpenCV | GStreamer warning: Cannot query video position: status=1, value=0, duration=-1
+[stream_publish-1] [INFO] [1739879331.907743950] [stream_publish]: Connected to RTSP stream using GStreamer pipeline
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (624) isPipelinePlaying OpenCV | GStreamer warning: unable to query pipeline state
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (2075) handleMessage OpenCV | GStreamer warning: Embedded video playback halted; module rtspsrc0 reported: Could not read from resource.
+[stream_publish-1] [WARN] [1739879347.399906104] [stream_publish]: Failed to read frame from RTSP stream. fail_count=1
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (2075) handleMessage OpenCV | GStreamer warning: Embedded video playback halted; module rtspsrc0 reported: Internal data stream error.
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (651) startPipeline OpenCV | GStreamer warning: unable to start pipeline
+[stream_publish-1] [WARN] [1739879354.440025542] [stream_publish]: Failed to read frame from RTSP stream. fail_count=2
+[stream_publish-1] [WARN] [1739879354.440242941] [stream_publish]: Capture not opened. Trying to re-open pipeline...
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (1063) open OpenCV | GStreamer warning: unable to query duration of stream
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (1100) open OpenCV | GStreamer warning: Cannot query video position: status=1, value=0, duration=-1
+[stream_publish-1] [ WARN:0] global ./modules/videoio/src/cap_gstreamer.cpp (616) isPipelinePlaying OpenCV | GStreamer warning: GStreamer: pipeline have not been created
+[stream_publish-1] [INFO] [1739879359.508928867] [stream_publish]: Connected to RTSP stream using GStreamer pipeline
+[stream_publish-1] [WARN] [1739879388.433618363] [stream_publish]: Failed to read frame from RTSP stream. fail_count=1
+[stream_publish-1] [WARN] [1739879388.435534485] [stream_publish]: Failed to read frame from RTSP stream. fail_count=2
+[stream_publish-1] [WARN] [1739879388.530754275] [stream_publish]: Failed to read frame from RTSP stream. fail_count=3
+[stream_publish-1] [WARN] [1739879388.631011536] [stream_publish]: Failed to read frame from RTSP stream. fail_count=4
+[stream_publish-1] [WARN] [1739879388.730918426] [stream_publish]: Failed to read frame from RTSP stream. fail_count=5
+[stream_publish-1] [WARN] [1739879388.830833494] [stream_publish]: Failed to read frame from RTSP stream. fail_count=6
+[stream_publish-1] [WARN] [1739879388.930857261] [stream_publish]: Failed to read frame from RTSP stream. fail_count=7
+[stream_publish-1] [WARN] [1739879389.030856810] [stream_publish]: Failed to read frame from RTSP stream. fail_count=8
+[stream_publish-1] [WARN] [1739879389.130591458] [stream_publish]: Failed to read frame from RTSP stream. fail_count=9
+[stream_publish-1] [WARN] [1739879389.231662585] [stream_publish]: Failed to read frame from RTSP stream. fail_count=10
+[stream_publish-1] [WARN] [1739879389.232861300] [stream_publish]: Trying to re-open pipeline...
+^C[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[stream_publish-1] [INFO] [1739879390.340741447] [rclcpp]: signal_handler(signum=2)
+[ERROR] [stream_publish-1]: process[stream_publish-1] failed to terminate '5' seconds after receiving 'SIGINT', escalating to 'SIGTERM'
+[INFO] [stream_publish-1]: sending signal 'SIGTERM' to process[stream_publish-1]
+[stream_publish-1] [INFO] [1739879395.367315398] [rclcpp]: signal_handler(signum=15)
+[ERROR] [stream_publish-1]: process[stream_publish-1] failed to terminate '10.0' seconds after receiving 'SIGTERM', escalating to 'SIGKILL'
+[INFO] [stream_publish-1]: sending signal 'SIGKILL' to process[stream_publish-1]
+[ERROR] [stream_publish-1]: process has died [pid 454, exit code -9, cmd '/workspace/src/install/image_transmission/lib/image_transmission/stream_publish --ros-args -r __node:=stream_publish --params-file /workspace/src/install/image_transmission/share/image_transmission/launch/../config/params.yaml'].
+
