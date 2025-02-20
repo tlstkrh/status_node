@@ -1,0 +1,250 @@
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>  // 압축 이미지 메시지
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/opencv.hpp>
+#include <string>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <mutex>
+
+class ImagePublisher : public rclcpp::Node {
+public:
+  ImagePublisher()
+    : Node("image_publisher"),
+      fail_count_(0),
+      reconnect_requested_(false),
+      stop_reading_(false)
+  {
+    // 1. 파라미터 선언 및 읽기
+    this->declare_parameter<std::string>("rtsp_url", "rtsp://192.168.144.25:8554/main.264");
+    this->declare_parameter<int>("latency", 100);
+    this->declare_parameter<std::string>("protocols", "tcp");  // or "udp"
+    this->declare_parameter<std::string>("topic_name", "compressed_image_topic");
+    this->declare_parameter<int>("fps", 10);             // Publish할 FPS
+    this->declare_parameter<int>("queue_size", 20);
+    this->declare_parameter<bool>("leaky_downstream", true);
+    this->declare_parameter<int>("jpeg_quality", 50);    // JPEG 품질 (0~100)
+
+    rtsp_url_ = this->get_parameter("rtsp_url").as_string();
+    int latency = this->get_parameter("latency").as_int();
+    std::string protocols = this->get_parameter("protocols").as_string();
+    topic_name_ = this->get_parameter("topic_name").as_string();
+    int publish_fps = this->get_parameter("fps").as_int();
+    int queue_size = this->get_parameter("queue_size").as_int();
+    bool leaky = this->get_parameter("leaky_downstream").as_bool();
+    jpeg_quality_ = this->get_parameter("jpeg_quality").as_int();
+
+    std::string leaky_option = leaky ? "downstream" : "no";
+
+    // 2. GStreamer 파이프라인 구성
+    pipeline_ =
+      "rtspsrc location=" + rtsp_url_ +
+      " latency=" + std::to_string(latency) +
+      " protocols=" + protocols +
+      " ! queue max-size-buffers=" + std::to_string(queue_size) +
+      " leaky=" + leaky_option +
+      " ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! "
+      "queue max-size-buffers=" + std::to_string(queue_size) +
+      " leaky=" + leaky_option +
+      " ! appsink sync=false";
+
+    RCLCPP_INFO(this->get_logger(), "Using pipeline: %s", pipeline_.c_str());
+
+    // 3. 파이프라인 열기
+    if (!openPipeline()) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to open RTSP stream at startup.");
+      return;
+    }
+
+    // 4. ROS Publisher 생성
+    //    메시지 타입: sensor_msgs::msg::CompressedImage
+    //    QoS: BEST_EFFORT
+    rclcpp::QoS qos_profile(10);
+    qos_profile.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
+    publisher_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(topic_name_, qos_profile);
+
+    // 5. 스트림 읽기 쓰레드 시작 (예: 30fps)
+    reading_thread_ = std::thread(&ImagePublisher::readLoop, this);
+
+    // 6. Publish 타이머: publish_fps(예: 10fps) 주기로 실행
+    int period_ms = static_cast<int>(1000 / publish_fps);
+    timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(period_ms),
+      std::bind(&ImagePublisher::timer_callback, this)
+    );
+
+    // 7. 재연결 타이머 (1초 간격)
+    reconnect_timer_ = this->create_wall_timer(
+      std::chrono::seconds(1),
+      std::bind(&ImagePublisher::reconnect_callback, this)
+    );
+  }
+
+  ~ImagePublisher() {
+    stop_reading_ = true;
+    if (reading_thread_.joinable()) {
+      reading_thread_.join();
+    }
+  }
+
+private:
+  bool openPipeline() {
+    if (cap_.isOpened()) {
+      cap_.release();
+    }
+    cap_.open(pipeline_, cv::CAP_GSTREAMER);
+    if (!cap_.isOpened()) {
+      return false;
+    }
+    RCLCPP_INFO(this->get_logger(), "Connected to RTSP stream using GStreamer pipeline");
+    fail_count_ = 0;
+    return true;
+  }
+
+  // 별도 쓰레드: 계속 스트림 읽기
+  void readLoop() {
+    while (rclcpp::ok() && !stop_reading_) {
+      if (!cap_.isOpened()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        continue;
+      }
+      cv::Mat frame;
+      if (cap_.read(frame)) {
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        latest_frame_ = frame.clone();
+        fail_count_ = 0;
+      } else {
+        fail_count_++;
+        RCLCPP_WARN(this->get_logger(), "Failed to read frame in readLoop, fail_count=%d", fail_count_);
+        if (fail_count_ >= 10) {
+          RCLCPP_WARN(this->get_logger(), "ReadLoop: Requesting to re-open pipeline...");
+          reconnect_requested_ = true;
+          fail_count_ = 0;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    }
+  }
+
+  // 타이머: 주기적으로 최신 프레임 압축 후 퍼블리시
+  void timer_callback() {
+    cv::Mat frame_to_publish;
+    {
+      std::lock_guard<std::mutex> lock(frame_mutex_);
+      if (latest_frame_.empty()) {
+        return;
+      }
+      frame_to_publish = latest_frame_.clone();
+    }
+
+    // -----------------------------
+    // [핵심] 프레임을 JPEG로 압축
+    // -----------------------------
+    std::vector<uchar> encoded_buf;
+    std::vector<int> params;
+    params.push_back(cv::IMWRITE_JPEG_QUALITY);
+    params.push_back(jpeg_quality_); // 0~100
+    // .jpg 확장자로 이미지를 메모리에 압축
+    bool success = cv::imencode(".jpg", frame_to_publish, encoded_buf, params);
+    if (!success) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to encode frame to JPEG.");
+      return;
+    }
+
+    // CompressedImage 메시지 생성
+    sensor_msgs::msg::CompressedImage compressed_msg;
+    compressed_msg.header.stamp = now();
+    compressed_msg.format = "jpeg";            // 또는 "jpeg; jpg compressed bgr8"
+    compressed_msg.data = encoded_buf;         // 압축 데이터
+
+    publisher_->publish(compressed_msg);
+    RCLCPP_INFO(this->get_logger(), "Published compressed frame, size=%zu bytes", encoded_buf.size());
+  }
+
+  // 재연결 타이머: reconnect_requested_가 true면 재오픈
+  void reconnect_callback() {
+    if (reconnect_requested_ && rclcpp::ok()) {
+      reconnect_requested_ = false;
+      RCLCPP_WARN(this->get_logger(), "Re-opening pipeline now...");
+      if (!openPipeline()) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to re-open pipeline (reconnect_callback).");
+      }
+    }
+  }
+
+  cv::VideoCapture cap_;
+  std::string pipeline_;
+  std::string rtsp_url_;
+  std::string topic_name_;
+
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr publisher_;
+  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr reconnect_timer_;
+
+  std::thread reading_thread_;
+  std::mutex frame_mutex_;
+  cv::Mat latest_frame_;
+
+  int fail_count_;
+  std::atomic<bool> reconnect_requested_;
+  std::atomic<bool> stop_reading_;
+
+  int jpeg_quality_; // JPEG 품질
+};
+
+int main(int argc, char** argv) {
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<ImagePublisher>();
+  rclcpp::spin(node);
+  rclcpp::shutdown();
+  return 0;
+}
+________________________________________________________________________________________________________________________________________________
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/opencv.hpp>
+
+class CompressedImageSubscriber : public rclcpp::Node {
+public:
+  CompressedImageSubscriber()
+    : Node("compressed_image_subscriber")
+  {
+    rclcpp::QoS qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_default));
+    qos_profile.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
+
+    subscription_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+        "compressed_image_topic",
+        qos_profile,
+        std::bind(&CompressedImageSubscriber::callback, this, std::placeholders::_1)
+    );
+  }
+
+private:
+  void callback(const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
+    try {
+      // msg->data 안에 JPEG 바이너리가 들어 있음
+      cv::Mat encodedImage(1, msg->data.size(), CV_8UC1, (void*)msg->data.data());
+      cv::Mat decoded = cv::imdecode(encodedImage, cv::IMREAD_COLOR);
+      if (decoded.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to decode compressed image");
+        return;
+      }
+      // 디코딩한 영상을 GUI로 확인
+      cv::imshow("Compressed Image", decoded);
+      cv::waitKey(1);
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(), "Exception in callback: %s", e.what());
+    }
+  }
+
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;
+};
+
+int main(int argc, char **argv) {
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<CompressedImageSubscriber>());
+  rclcpp::shutdown();
+  return 0;
+}
