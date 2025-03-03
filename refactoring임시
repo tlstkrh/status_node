@@ -1,0 +1,270 @@
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp> 
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/opencv.hpp>
+#include <string>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <mutex>
+
+class ImagePublisher : public rclcpp::Node {
+public:
+  ImagePublisher()
+    : Node("image_publisher"),
+      fail_count_(0),
+      reconnect_requested_(false),
+      stop_reading_(false)
+  {
+    this->declare_parameter<std::string>("rtsp_url", "rtsp://192.168.144.25:8554/main.264");
+    this->declare_parameter<int>("latency", 100);
+    this->declare_parameter<std::string>("protocols", "tcp");
+    this->declare_parameter<std::string>("topic_name", "compressed_image_topic");
+    this->declare_parameter<int>("fps", 10);
+    this->declare_parameter<int>("queue_size", 20);
+    this->declare_parameter<bool>("leaky_downstream", true);
+    this->declare_parameter<int>("jpeg_quality", 50);
+
+    rtsp_url_ = this->get_parameter("rtsp_url").as_string();
+    int latency = this->get_parameter("latency").as_int();
+    std::string protocols = this->get_parameter("protocols").as_string();
+    topic_name_ = this->get_parameter("topic_name").as_string();
+    int publish_fps = this->get_parameter("fps").as_int();
+    int queue_size = this->get_parameter("queue_size").as_int();
+    bool leaky = this->get_parameter("leaky_downstream").as_bool();
+    jpeg_quality_ = this->get_parameter("jpeg_quality").as_int();
+
+    std::string leaky_option = leaky ? "downstream" : "no";
+
+    // --- appsink에 drop, max-buffers 등 옵션 추가 ---
+    pipeline_ =
+      "rtspsrc location=" + rtsp_url_ +
+      " latency=" + std::to_string(latency) +
+      " protocols=" + protocols +
+      " ! queue max-size-buffers=" + std::to_string(queue_size) +
+      " leaky=" + leaky_option +
+      " ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! "
+      "queue max-size-buffers=" + std::to_string(queue_size) +
+      " leaky=" + leaky_option +
+      " ! appsink sync=false drop=true max-buffers=1";
+
+    RCLCPP_INFO(this->get_logger(), "Using pipeline: %s", pipeline_.c_str());
+
+    // --- openPipeline ---
+    if (!openPipeline()) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to open RTSP stream at startup.");
+      // 만약 여기서 실패하면, 이후 reconnect_callback()에서 재시도할 수 있게 그대로 진행
+      // return; // 굳이 여기서 노드를 죽여버리지 않고, 재연결 타이머로 돌리는 것도 방법.
+    }
+
+    // --- QoS 프로필 세팅 (구독자 측도 같은 프로필인지 확인 필요) ---
+    rclcpp::QoS qos_profile(10);
+    qos_profile.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
+
+    publisher_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(topic_name_, qos_profile);
+
+    // --- frame read 전용 스레드 ---
+    reading_thread_ = std::thread(&ImagePublisher::readLoop, this);
+
+    // --- 타이머: publish_fps에 맞춰 압축 후 퍼블리시 ---
+    int period_ms = static_cast<int>(1000 / publish_fps);
+    timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(period_ms),
+      std::bind(&ImagePublisher::timer_callback, this)
+    );
+
+    // --- 1초마다 재연결 여부 확인 ---
+    reconnect_timer_ = this->create_wall_timer(
+      std::chrono::seconds(1),
+      std::bind(&ImagePublisher::reconnect_callback, this)
+    );
+  }
+
+  ~ImagePublisher() {
+    stop_reading_ = true;
+    if (reading_thread_.joinable()) {
+      reading_thread_.join();
+    }
+    // cap_.release(); // 안전하게 자원 해제
+  }
+
+private:
+  bool openPipeline() {
+    if (cap_.isOpened()) {
+      cap_.release();
+    }
+    cap_.open(pipeline_, cv::CAP_GSTREAMER);
+    if (!cap_.isOpened()) {
+      return false;
+    }
+    RCLCPP_INFO(this->get_logger(), "Connected to RTSP stream using GStreamer pipeline");
+    fail_count_ = 0;
+    return true;
+  }
+
+  void readLoop() {
+    while (rclcpp::ok() && !stop_reading_) {
+      if (!cap_.isOpened()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
+      cv::Mat frame;
+      if (cap_.read(frame)) {
+        {
+          std::lock_guard<std::mutex> lock(frame_mutex_);
+          // 불필요한 clone을 줄이려면 여기서 바로 publish용 buffer로 넘길 수도 있음.
+          latest_frame_ = frame; // 큰 문제 없으면 clone 대신 그냥 대입
+        }
+        fail_count_ = 0;
+      } else {
+        fail_count_++;
+        RCLCPP_WARN(this->get_logger(),
+                    "Failed to read frame in readLoop, fail_count=%d", fail_count_);
+        if (fail_count_ >= 10) {
+          RCLCPP_WARN(this->get_logger(), "ReadLoop: Requesting to re-open pipeline...");
+          reconnect_requested_ = true;
+          fail_count_ = 0;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+    }
+  }
+
+  void timer_callback() {
+    cv::Mat frame_to_publish;
+    {
+      std::lock_guard<std::mutex> lock(frame_mutex_);
+      if (latest_frame_.empty()) {
+        // 아직 프레임이 없으면 패스
+        return;
+      }
+      frame_to_publish = latest_frame_.clone(); 
+    }
+    // JPEG 압축
+    std::vector<uchar> encoded_buf;
+    std::vector<int> params;
+    params.push_back(cv::IMWRITE_JPEG_QUALITY);
+    params.push_back(jpeg_quality_);
+
+    bool success = cv::imencode(".jpg", frame_to_publish, encoded_buf, params);
+    if (!success) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to encode frame to JPEG.");
+      return;
+    }
+
+    sensor_msgs::msg::CompressedImage compressed_msg;
+    compressed_msg.header.stamp = now();
+    compressed_msg.format = "jpeg";
+    compressed_msg.data = encoded_buf;
+
+    publisher_->publish(compressed_msg);
+    // 필요 이상으로 INFO를 많이 찍으면 성능 저하 초래 가능. 상황에 따라 레벨 조정.
+    RCLCPP_DEBUG(this->get_logger(), "Published compressed frame, size=%zu bytes", encoded_buf.size());
+  }
+
+  void reconnect_callback() {
+    if (reconnect_requested_ && rclcpp::ok()) {
+      reconnect_requested_ = false;
+      RCLCPP_WARN(this->get_logger(), "Re-opening pipeline now...");
+      if (!openPipeline()) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to re-open pipeline (reconnect_callback).");
+      }
+    }
+  }
+
+  cv::VideoCapture cap_;
+  std::string pipeline_;
+  std::string rtsp_url_;
+  std::string topic_name_;
+
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr publisher_;
+  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr reconnect_timer_;
+
+  std::thread reading_thread_;
+  std::mutex frame_mutex_;
+  cv::Mat latest_frame_;
+
+  int fail_count_;
+  std::atomic<bool> reconnect_requested_;
+  std::atomic<bool> stop_reading_;
+
+  int jpeg_quality_; 
+};
+
+int main(int argc, char** argv) {
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<ImagePublisher>();
+  rclcpp::spin(node);
+  rclcpp::shutdown();
+  return 0;
+}
+____________________________________________________________________________________________________________________________________________________________________________________
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
+#include <opencv2/opencv.hpp>
+#include <mutex>
+
+class CompressedImageSubscriber : public rclcpp::Node {
+public:
+  CompressedImageSubscriber()
+  : Node("compressed_image_subscriber")
+  {
+    rclcpp::QoS qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_default));
+    qos_profile.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
+
+    subscription_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+      "compressed_image_topic", qos_profile,
+      std::bind(&CompressedImageSubscriber::callback, this, std::placeholders::_1)
+    );
+  }
+
+  // callback에서 디코딩만 수행하고, Mat은 멤버 변수에 저장
+  void callback(const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
+    try {
+      cv::Mat encoded(1, msg->data.size(), CV_8UC1, (void*)msg->data.data());
+      cv::Mat decoded = cv::imdecode(encoded, cv::IMREAD_COLOR);
+      if (!decoded.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        latest_frame_ = decoded; // 복사
+      }
+      else {
+        RCLCPP_ERROR(this->get_logger(), "Failed to decode compressed image");
+      }
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(), "Exception in callback: %s", e.what());
+    }
+  }
+
+  cv::Mat getLatestFrame() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return latest_frame_.clone();
+  }
+
+private:
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;
+  cv::Mat latest_frame_;
+  std::mutex mutex_;
+};
+
+int main(int argc, char **argv) {
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<CompressedImageSubscriber>();
+
+  // --- 메인 스레드에서 GUI 루프 + spin_some() 처리 ---
+  cv::namedWindow("Compressed Image", cv::WINDOW_NORMAL);
+
+  while (rclcpp::ok()) {
+    rclcpp::spin_some(node);
+
+    // 구독 콜백에서 저장한 최신 프레임 불러오기
+    cv::Mat frame = node->getLatestFrame();
+    if (!frame.empty()) {
+      cv::imshow("Compressed Image", frame);
+    }
+    cv::waitKey(1);
+  }
+
+  rclcpp::shutdown();
+  return 0;
+}
