@@ -98,6 +98,7 @@ private:
       return false;
     }
     RCLCPP_INFO(this->get_logger(), "Connected to RTSP stream using GStreamer pipeline");
+
     fail_count_ = 0;
     return true;
   }
@@ -160,6 +161,8 @@ private:
     publisher_->publish(compressed_msg);
     // 필요 이상으로 INFO를 많이 찍으면 성능 저하 초래 가능. 상황에 따라 레벨 조정.
     RCLCPP_DEBUG(this->get_logger(), "Published compressed frame, size=%zu bytes", encoded_buf.size());
+    //RCLCPP_INFO(this->get_logger(), "Published compressed frame, size=%zu bytes", encoded_buf.size());
+
   }
 
   void reconnect_callback() {
